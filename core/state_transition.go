@@ -67,7 +67,7 @@ func (result *ExecutionResult) Revert() []byte {
 }
 
 // IntrinsicGas computes the 'intrinsic gas' for a message with the given data.
-func IntrinsicGas(data []byte, accessList types.AccessList, isContractCreation, isHomestead, isEIP2028, isEIP3860 bool) (uint64, error) {
+func IntrinsicGas(data []byte, accessList types.AccessList, authList types.AuthorizationList, isContractCreation, isHomestead, isEIP2028, isEIP3860 bool) (uint64, error) {
 	// Set the starting gas for the raw transaction
 	var gas uint64
 	if isContractCreation && isHomestead {
@@ -113,6 +113,9 @@ func IntrinsicGas(data []byte, accessList types.AccessList, isContractCreation, 
 		gas += uint64(len(accessList)) * params.TxAccessListAddressGas
 		gas += uint64(accessList.StorageKeys()) * params.TxAccessListStorageKeyGas
 	}
+	if authList != nil {
+		gas += uint64(len(authList)) * params.TxAuthTupleGas
+	}
 	return gas, nil
 }
 
@@ -140,6 +143,7 @@ type Message struct {
 	AccessList    types.AccessList
 	BlobGasFeeCap *big.Int
 	BlobHashes    []common.Hash
+	AuthList      types.AuthorizationList
 
 	// When SkipNonceChecks is true, the message nonce is not checked against the
 	// account nonce in state.
@@ -162,20 +166,16 @@ type Message struct {
 // TransactionToMessage converts a transaction into a Message.
 func TransactionToMessage(tx *types.Transaction, s types.Signer, baseFee *big.Int) (*Message, error) {
 	msg := &Message{
-		Nonce:            tx.Nonce(),
-		GasLimit:         tx.Gas(),
-		GasPrice:         new(big.Int).Set(tx.GasPrice()),
-		GasFeeCap:        new(big.Int).Set(tx.GasFeeCap()),
-		GasTipCap:        new(big.Int).Set(tx.GasTipCap()),
-		To:               tx.To(),
-		Value:            tx.Value(),
-		Data:             tx.Data(),
-		AccessList:       tx.AccessList(),
-		SkipNonceChecks:  false,
-		SkipFromEOACheck: false,
-		BlobHashes:       tx.BlobHashes(),
-		BlobGasFeeCap:    tx.BlobGasFeeCap(),
-
+		Nonce:          tx.Nonce(),
+		GasLimit:       tx.Gas(),
+		GasPrice:       new(big.Int).Set(tx.GasPrice()),
+		GasFeeCap:      new(big.Int).Set(tx.GasFeeCap()),
+		GasTipCap:      new(big.Int).Set(tx.GasTipCap()),
+		To:             tx.To(),
+		Value:          tx.Value(),
+		Data:           tx.Data(),
+		AccessList:     tx.AccessList(),
+		AuthList:       tx.AuthList(),
 		IsSystemTx:     tx.IsSystemTx(),
 		IsDepositTx:    tx.IsDepositTx(),
 		Mint:           tx.Mint(),
@@ -404,6 +404,7 @@ func (st *StateTransition) preCheck() error {
 			}
 		}
 	}
+
 	return st.buyGas()
 }
 
@@ -487,7 +488,7 @@ func (st *StateTransition) innerTransitionDb() (*ExecutionResult, error) {
 	)
 
 	// Check clauses 4-5, subtract intrinsic gas if everything is correct
-	gas, err := IntrinsicGas(msg.Data, msg.AccessList, contractCreation, rules.IsHomestead, rules.IsIstanbul, rules.IsShanghai)
+	gas, err := IntrinsicGas(msg.Data, msg.AccessList, msg.AuthList, contractCreation, rules.IsHomestead, rules.IsIstanbul, rules.IsShanghai)
 	if err != nil {
 		return nil, err
 	}
@@ -525,10 +526,39 @@ func (st *StateTransition) innerTransitionDb() (*ExecutionResult, error) {
 		return nil, fmt.Errorf("%w: code size %v limit %v", ErrMaxInitCodeSizeExceeded, len(msg.Data), params.MaxInitCodeSize)
 	}
 
+	// Check authorizations list validity.
+	var delegations []types.SetCodeDelegation
+	if msg.AuthList != nil {
+		seen := make(map[common.Address]bool)
+		for _, auth := range msg.AuthList {
+			authority, err := auth.Authority()
+			if err != nil {
+				continue
+			}
+			var nonce *uint64
+			if len(auth.Nonce) > 1 {
+				return nil, fmt.Errorf("authorization must be either empty list or contain exactly one element")
+			}
+			if len(auth.Nonce) == 1 {
+				tmp := auth.Nonce[0]
+				nonce = &tmp
+			}
+			if nonce != nil {
+				if have := st.state.GetNonce(authority); have != *nonce {
+					continue
+				}
+			}
+			if _, ok := seen[authority]; !ok {
+				seen[authority] = true
+				delegations = append(delegations, types.SetCodeDelegation{From: authority, Nonce: nonce, Target: auth.Address})
+			}
+		}
+	}
+
 	// Execute the preparatory steps for state transition which includes:
 	// - prepare accessList(post-berlin)
 	// - reset transient storage(eip 1153)
-	st.state.Prepare(rules, msg.From, st.evm.Context.Coinbase, msg.To, vm.ActivePrecompiles(rules), msg.AccessList)
+	st.state.Prepare(rules, msg.From, st.evm.Context.Coinbase, msg.To, vm.ActivePrecompiles(rules), msg.AccessList, delegations)
 
 	var (
 		ret   []byte
