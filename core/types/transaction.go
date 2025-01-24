@@ -590,7 +590,7 @@ func (tx *Transaction) WithBlobTxSidecar(sideCar *BlobTxSidecar) *Transaction {
 }
 
 // AuthList returns the authorizations list of the transaction.
-func (tx *Transaction) AuthList() AuthorizationList {
+func (tx *Transaction) AuthList() []Authorization {
 	setcodetx, ok := tx.inner.(*SetCodeTx)
 	if !ok {
 		return nil
@@ -598,9 +598,9 @@ func (tx *Transaction) AuthList() AuthorizationList {
 	return setcodetx.AuthList
 }
 
-// SetTime sets the decoding time of a transaction. Used by the sequencer API to
-// determine mempool time spent by conditional txs and by tests to set arbitrary
-// times and by persistent transaction pools when loading old txs from disk.
+// SetTime sets the decoding time of a transaction. This is used by tests to set
+// arbitrary times and by persistent transaction pools when loading old txs from
+// disk.
 func (tx *Transaction) SetTime(t time.Time) {
 	tx.time = t
 }
