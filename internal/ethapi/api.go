@@ -1184,7 +1184,7 @@ func RPCMarshalHeader(head *types.Header) map[string]interface{} {
 		result["parentBeaconBlockRoot"] = head.ParentBeaconRoot
 	}
 	if head.RequestsHash != nil {
-		result["requestsRoot"] = head.RequestsHash
+		result["requestsHash"] = head.RequestsHash
 	}
 	return result
 }
@@ -1244,7 +1244,7 @@ type RPCTransaction struct {
 	Accesses            *types.AccessList `json:"accessList,omitempty"`
 	ChainID             *hexutil.Big      `json:"chainId,omitempty"`
 	BlobVersionedHashes []common.Hash     `json:"blobVersionedHashes,omitempty"`
-	AuthorizationList   []types.Authorization `json:"authorizationList,omitempty"`
+	AuthorizationList   []types.SetCodeAuthorization `json:"authorizationList,omitempty"`
 	V                   *hexutil.Big      `json:"v"`
 	R                   *hexutil.Big      `json:"r"`
 	S                   *hexutil.Big      `json:"s"`
@@ -1365,7 +1365,7 @@ func newRPCTransaction(tx *types.Transaction, blockHash common.Hash, blockNumber
 		} else {
 			result.GasPrice = (*hexutil.Big)(tx.GasFeeCap())
 		}
-		result.AuthorizationList = tx.AuthList()
+		result.AuthorizationList = tx.SetCodeAuthorizations()
 	}
 	return result
 }
